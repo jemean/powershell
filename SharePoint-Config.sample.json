@@ -1,0 +1,20 @@
+{
+    "_comment": "Copier ce fichier en SharePoint-Config.json et renseigner les valeurs",
+
+    "TenantId":        "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "ClientId":        "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "CertThumbprint":  "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+
+    "SharePointHost":  "votre-tenant.sharepoint.com",
+    "SitePath":        "/sites/votre-site",
+    "DriveName":       "Documents",
+
+    "LargeFileThresholdMB": 4,
+    "UploadChunkSizeMB":    10,
+    "MaxRetries":           3,
+    "RetryDelaySeconds":    5,
+
+    "LogFile":         "",
+    "LogLevel":        "INFO",
+    "LogToConsole":    true
+}

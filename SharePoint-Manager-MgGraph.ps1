@@ -21,6 +21,8 @@
 .PARAMETER DestinationPath  Répertoire de destination local (download)
 .PARAMETER PostProcess      None | Delete | Archive  — traitement du source après succès
 .PARAMETER ArchivePath      Répertoire local d'archivage (si PostProcess = Archive)
+.PARAMETER ConfigFile       Chemin du fichier de configuration JSON
+                            [défaut: SharePoint-Config.json dans le répertoire du script]
 
 .EXAMPLE
     .\SharePoint-Manager-MgGraph.ps1 -Action UploadFile -LocalPath "C:\data\rapport.xlsx" -SPFolder "Documents/Rapports"
@@ -56,42 +58,74 @@ param(
 
     [ValidateSet('None','Delete','Archive')]
     [string]$PostProcess = 'None',
-    [string]$ArchivePath
+    [string]$ArchivePath,
+
+    [string]$ConfigFile = (Join-Path $PSScriptRoot 'SharePoint-Config.json')
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # ============================================================
-#region Configuration  —  ADAPTER AVANT UTILISATION
+#region Configuration
 # ============================================================
-$Script:Config = [ordered]@{
-    # Azure AD / Enregistrement d'application
-    TenantId           = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
-    ClientId           = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
-    CertThumbprint     = 'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX'
-
-    # SharePoint
-    SharePointHost     = 'votre-tenant.sharepoint.com'
-    SitePath           = '/sites/votre-site'
-    DriveName          = 'Documents'    # vide = drive par défaut
-
-    # Comportement
-    LargeFileThreshold = 4MB
-    UploadChunkSize    = 10485760       # 10 Mo (multiple de 327 680)
-
-    # Journalisation
-    LogFile            = (Join-Path $PSScriptRoot 'SharePoint-Manager.log')
-    LogLevel           = 'INFO'         # DEBUG | INFO | WARNING | ERROR
-    LogToConsole       = $true
-
-    # URL de base Graph (ne pas modifier)
-    GraphBaseUrl       = 'https://graph.microsoft.com/v1.0'
-}
-
-# Caches internes
+$Script:Config        = $null   # initialisé par Import-SPConfig
 $Script:CachedSiteId  = $null
 $Script:CachedDriveId = $null
+
+function Import-SPConfig {
+    <#
+    .SYNOPSIS Charge et valide le fichier de configuration JSON.
+    Appelé automatiquement à l'exécution, ou manuellement après dot-sourcing :
+        . .\SharePoint-Manager-MgGraph.ps1
+        Import-SPConfig -ConfigFile "C:\projets\projet1\config.json"
+    #>
+    param(
+        [Parameter(Mandatory)][string]$ConfigFile
+    )
+
+    if (-not (Test-Path $ConfigFile -PathType Leaf)) {
+        throw "Fichier de configuration introuvable : $ConfigFile`nCréer un fichier JSON à partir de SharePoint-Config.sample.json"
+    }
+
+    $json = Get-Content $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
+
+    # Validation des champs obligatoires
+    foreach ($field in 'TenantId','ClientId','CertThumbprint','SharePointHost','SitePath') {
+        $val = $json.$field
+        if ([string]::IsNullOrWhiteSpace($val) -or $val -match '^[xX]+(-[xX]+)*$') {
+            throw "Champ '$field' manquant ou non renseigné dans '$ConfigFile'."
+        }
+    }
+
+    $dir = Split-Path $ConfigFile -Parent
+
+    $Script:Config = [ordered]@{
+        # Obligatoires — issus du fichier de config
+        TenantId           = $json.TenantId
+        ClientId           = $json.ClientId
+        CertThumbprint     = $json.CertThumbprint
+        SharePointHost     = $json.SharePointHost
+        SitePath           = $json.SitePath
+
+        # Optionnels — valeur du fichier ou défaut
+        DriveName          = if ($null -ne $json.DriveName)            { $json.DriveName }                           else { 'Documents' }
+        LargeFileThreshold = if ($null -ne $json.LargeFileThresholdMB) { [long]$json.LargeFileThresholdMB * 1MB }    else { 4MB }
+        UploadChunkSize    = if ($null -ne $json.UploadChunkSizeMB)    { [long]$json.UploadChunkSizeMB * 1MB }        else { 10485760 }
+        LogFile            = if ($json.LogFile)                        { $json.LogFile }                             else { Join-Path $dir 'SharePoint-Manager.log' }
+        LogLevel           = if ($json.LogLevel)                       { $json.LogLevel }                            else { 'INFO' }
+        LogToConsole       = if ($null -ne $json.LogToConsole)         { [bool]$json.LogToConsole }                  else { $true }
+
+        # Fixe — non exposé dans le fichier de config
+        GraphBaseUrl       = 'https://graph.microsoft.com/v1.0'
+    }
+
+    # Réinitialisation des caches à chaque chargement de config
+    $Script:CachedSiteId  = $null
+    $Script:CachedDriveId = $null
+
+    Write-Verbose "Config chargée : $($Script:Config.SharePointHost)$($Script:Config.SitePath)"
+}
 #endregion
 
 # ============================================================
@@ -605,6 +639,7 @@ function Test-SPFileExists {
 # ============================================================
 if ($MyInvocation.InvocationName -ne '.' -and -not [string]::IsNullOrWhiteSpace($Action)) {
 
+    Import-SPConfig -ConfigFile $ConfigFile
     Connect-SPGraph
 
     Write-Log -Level INFO -Message "========== SharePoint Manager (MgGraph) | Action: $Action =========="
